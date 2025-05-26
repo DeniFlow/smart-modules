@@ -4,6 +4,8 @@
 /// @author: Solidity University
 pragma solidity ^0.8.30;
 
+import "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+
 contract VaultMultisig {
     /// @notice The number of signatures required to execute a transaction
     uint256 public quorum;
@@ -13,6 +15,8 @@ contract VaultMultisig {
 
     /// @notice The current multisig signers
     address[] public currentMultiSigSigners;
+
+    IERC20 public token;
 
     /// @dev The struct is used to store the details of a transfer
     /// @param to The address of the recipient
@@ -29,10 +33,10 @@ contract VaultMultisig {
     }
 
     /// @notice The mapping of transfer IDs to transfer details
-    mapping (uint256 => Transfer) private transfers;
+    mapping(uint256 => Transfer) private transfers;
 
     /// @notice The mapping for verification that address is a signer
-    mapping (address => bool) private multiSigSigners;
+    mapping(address => bool) private multiSigSigners;
 
     /// @notice Checks that signers array is not empty
     error SignersArrayCannotBeEmpty();
@@ -74,6 +78,8 @@ contract VaultMultisig {
     /// @notice Checks that the signer is a multisig admin
     error InvalidMultisigAdmin();
 
+    error TokenAddressCantBeZero();
+
     /// @notice Emitted when a transfer is initiated
     event TransferInitiated(uint256 indexed transferId, address indexed to, uint256 amount);
 
@@ -101,19 +107,18 @@ contract VaultMultisig {
     /// @notice Initializes the multisig contract
     /// @param _signers The array of multisig signers
     /// @param _quorum The number of signatures required to execute a transaction
-    constructor(
-        address[] memory _signers,
-        uint256 _quorum
-    ) {
+    constructor(address[] memory _signers, uint256 _quorum, address _token) {
         if (_signers.length == 0) revert SignersArrayCannotBeEmpty();
         if (_quorum > _signers.length) revert QuorumGreaterThanSigners();
         if (_quorum == 0) revert QuorumCannotBeZero();
+        if (_token == address(0)) revert TokenAddressCantBeZero();
 
         for (uint256 i = 0; i < _signers.length; i++) {
             multiSigSigners[_signers[i]] = true;
         }
 
         quorum = _quorum;
+        token = IERC20(_token);
     }
 
     /// @notice Initiates a transfer
@@ -152,10 +157,11 @@ contract VaultMultisig {
         if (transfer.approvals < quorum) revert QuorumHasNotBeenReached(_transferId);
         if (transfer.executed) revert TransferIsAlreadyExecuted(_transferId);
 
-        uint256 balance = address(this).balance;
+        uint256 balance = token.balanceOf(address(this));
         if (transfer.amount >= balance) revert InsufficientBalance(balance, transfer.amount);
 
-        (bool success, ) = transfer.to.call{value: transfer.amount}("");
+        //(bool success, ) = transfer.to.call{value: transfer.amount}("");
+        bool success = token.transfer(transfer.to, transfer.amount);
         if (!success) revert TransferFailed(_transferId);
 
         transfer.executed = true;
@@ -172,12 +178,11 @@ contract VaultMultisig {
     /// @return amount The amount of tokens to transfer
     /// @return approvals The number of approvals required to execute the transfer
     /// @return executed Whether the transfer has been executed
-    function getTransfer(uint256 _transferId) external view returns (
-        address to,
-        uint256 amount,
-        uint256 approvals,
-        bool executed
-    ) {
+    function getTransfer(uint256 _transferId)
+        external
+        view
+        returns (address to, uint256 amount, uint256 approvals, bool executed)
+    {
         Transfer storage transfer = transfers[_transferId];
         return (transfer.to, transfer.amount, transfer.approvals, transfer.executed);
     }
